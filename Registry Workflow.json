@@ -1,0 +1,472 @@
+{
+  "name": "Registry Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "f97c5250-f524-4d7d-9e1f-5fddd5ead6fa",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://judicial.ky/public-registers/",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "9e33f2f2-2723-4d4a-8688-6a7d2ccea131",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "operation": "scrape",
+        "url": "https://judicial.ky/public-registers/?register=Financial+Services",
+        "scrapeOptions": {
+          "options": {
+            "formats": {
+              "format": [
+                {},
+                {
+                  "type": "html"
+                }
+              ]
+            },
+            "headers": {}
+          }
+        },
+        "requestOptions": {}
+      },
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [
+        416,
+        0
+      ],
+      "id": "e9121fe6-a2c6-407f-9be2-5511340a06b9",
+      "name": "Scrape a url and get its content",
+      "credentials": {
+        "firecrawlApi": {
+          "id": "xSOxF3h5TQEtw3cZ",
+          "name": "Firecrawl account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input: items from CODE 3\nconst cases = $input.all().map(i => i.json);\n\nconst lines = cases.map((c, idx) => {\n  const link = c.hrefPreview ? `\\n   • Link: ${c.hrefPreview}` : \"\";\n  return `${idx + 1}) ${c.causeNumber} (${c.filingDate})\n   • Title: ${c.title}\n   • Subject: ${c.subject}\n   • Register: ${c.register}${link}`;\n});\n\nreturn [{ json: { lines } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1712,
+        -112
+      ],
+      "id": "f7cf2cb2-70fd-41f3-abba-700949b9d40d",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { lines = [] } = $input.item.json;\n\nconst header = \"📑 Cayman Registry – New Cases\\n\";\nconst footer = \"\\n— End of update —\";\nconst body = lines.length ? lines.join(\"\\n\\n\") : \"No new cases today.\";\n\nreturn [{ json: { report: `${header}${body}${footer}` } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        -112
+      ],
+      "id": "d49bf6ea-0c84-422f-b1ad-afa39199b0ee",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C09B46WHGBE",
+          "mode": "list",
+          "cachedResultName": "tma-intel"
+        },
+        "text": "={{$json.report}}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2144,
+        -112
+      ],
+      "id": "63e63494-e6c1-493f-b267-a674ee2e5da9",
+      "name": "Send a message",
+      "webhookId": "a758eeb2-2f67-4710-9ed1-fd40aeb9cfe2",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "50evDPBNTBzBSYf0",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs",
+          "mode": "list",
+          "cachedResultName": "Registry Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "caseNumber"
+          ],
+          "schema": [
+            {
+              "id": "causeNumber",
+              "displayName": "causeNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "filingDate",
+              "displayName": "filingDate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "register",
+              "displayName": "register",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "processedAt",
+              "displayName": "processedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "actions",
+              "displayName": "actions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hrefPreview",
+              "displayName": "hrefPreview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "addedAt",
+              "displayName": "addedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1680,
+        240
+      ],
+      "id": "07805e92-2455-4aac-a075-419c3283bdc2",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AN61B811XT6j8wL2",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Read Firecrawl output directly\nconst md = $json?.data?.markdown || \"\";\nconst html = $json?.data?.html || \"\";\nconst baseOrigin = \"https://judicial.ky\";\n\n// Find a preview link for a given cause number by scanning the HTML row\nfunction linkFor(cause) {\n  if (!cause) return null;\n  const idx = html.indexOf(cause);\n  if (idx === -1) return null;\n\n  const start = html.lastIndexOf(\"<tr\", idx);\n  const end = html.indexOf(\"</tr>\", idx);\n  if (start === -1 || end === -1) return null;\n\n  const row = html.slice(start, end + 5);\n\n  // Prefer a \"Preview\" link; else first link in the row\n  const mPreview = row.match(/<a[^>]+href=\"([^\"]+)\"[^>]*>\\s*Preview\\s*<\\/a>/i);\n  let href = mPreview?.[1];\n  if (!href) {\n    const mAny = row.match(/<a[^>]+href=\"([^\"]+)\"/i);\n    href = mAny?.[1] || null;\n  }\n  if (!href) return null;\n  if (href.startsWith(\"/\")) href = baseOrigin + href;\n  return href;\n}\n\n// Parse markdown table rows\nconst lines = md.split(\"\\n\").filter(l => l.startsWith(\"|\"));\nif (lines.length < 2) return [];\n\n// Drop header/separator lines\nconst dataLines = lines.filter(l => !l.includes(\"---\")).slice(1);\n\n// Build case objects\nconst cases = dataLines.map(row => {\n  const cols = row.split(\"|\").map(c => c.trim());\n  // | Cause Number | Filing Date | Title | Subject | Register | Actions |\n  const causeNumber = cols[1] || \"\";\n  const filingDate  = cols[2] || \"\";\n  const title       = cols[3] || \"\";\n  const subject     = cols[4] || \"\";\n  const register    = cols[5] || \"\";\n  const hrefPreview = linkFor(causeNumber);\n\n  return { causeNumber, filingDate, title, subject, register, hrefPreview };\n});\n\n// Keep only petitions of any kind\nlet petitions = cases.filter(c => (c.subject || \"\").toLowerCase().includes(\"petition\"));\n\n// Fallback link if no preview found\nfunction makeSearchUrl(cause) {\n  return `https://judicial.ky/public-registers/?register=Financial+Services&text=${encodeURIComponent(cause || \"\")}`;\n}\npetitions = petitions.map(c => ({\n  ...c,\n  hrefPreview: c.hrefPreview || makeSearchUrl(c.causeNumber)\n}));\n\n// Output one item per case\nreturn petitions.map(c => ({ json: c }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "e305747e-4886-4dc9-bebb-d45b1bd34e8c",
+      "name": "CODE 1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Scraped cases from CODE 1\nconst scraped = $items(\"CODE 1\").map(i => i.json);\n\n// Existing rows from the Sheets node we just renamed\nconst existingRows = $items(\"SheetRows\").map(i => i.json).filter(Boolean);\n\n// Build a set of existing keys (causeNumber)\nconst seen = new Set(\n  existingRows\n    .map(r => String(r.causeNumber || \"\").trim().toUpperCase())\n    .filter(Boolean)\n);\n\n// Keep only truly new\nconst fresh = scraped.filter(c => {\n  const key = String(c.causeNumber || \"\").trim().toUpperCase();\n  return key && !seen.has(key);\n});\n\n// If sheet is empty, pass everything through\nconst out = (fresh.length === 0 && seen.size === 0) ? scraped : fresh;\n\n// Stamp and return\nconst now = new Date().toISOString();\nreturn out.map(c => ({ json: { ...c, addedAt: now } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        0
+      ],
+      "id": "a77886bc-8d4a-4154-8756-11897963d587",
+      "name": "CODE 3",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs",
+          "mode": "list",
+          "cachedResultName": "Registry Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1088,
+        -192
+      ],
+      "id": "a22af4e3-7ef3-4261-8966-d6fc50e3f62e",
+      "name": "Get row(s) in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AN61B811XT6j8wL2",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs",
+          "mode": "list",
+          "cachedResultName": "Registry Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        976,
+        0
+      ],
+      "id": "45be43a8-0407-45fe-ba36-776ef2791728",
+      "name": "SheetRows",
+      "alwaysOutputData": true,
+      "executeOnce": false,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AN61B811XT6j8wL2",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Scrape a url and get its content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape a url and get its content": {
+      "main": [
+        [
+          {
+            "node": "CODE 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        []
+      ]
+    },
+    "CODE 1": {
+      "main": [
+        [
+          {
+            "node": "SheetRows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE 3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet1": {
+      "main": [
+        []
+      ]
+    },
+    "SheetRows": {
+      "main": [
+        [
+          {
+            "node": "CODE 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "55b0f647-c625-4b58-aaa1-f25bb1f20ee1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c0f5b1c5d103b3c423a379e31a20aba66aef9da572576b9ac00d6457af5c9db0"
+  },
+  "id": "HLcldCgD1kWK6LRW",
+  "tags": []
+}

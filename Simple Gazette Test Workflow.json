@@ -1,0 +1,135 @@
+{
+  "name": "Simple Gazette Test - Text Output",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual_trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine which gazettes to check based on current date\nconst today = new Date();\nconst dayOfWeek = today.getDay(); // 0 = Sunday, 5 = Friday\nconst dayOfMonth = today.getDate();\n\nlet gazetteType, gazetteUrl, schedule;\n\n// Friday = check extraordinary gazette\nif (dayOfWeek === 5) {\n  gazetteType = 'Extraordinary Gazette';\n  gazetteUrl = 'https://www.gov.ky/gazettes/extraordinary-gazettes';\n  schedule = 'Every Friday';\n} else if (dayOfMonth === 1 || dayOfMonth === 15) {\n  // Check regular gazette every 2 weeks (1st and 15th)\n  gazetteType = 'Regular Gazette';\n  gazetteUrl = 'https://www.gov.ky/gazettes/gazettes';\n  schedule = 'Every 2 weeks';\n} else {\n  // Default to extraordinary for testing\n  gazetteType = 'Extraordinary Gazette';\n  gazetteUrl = 'https://www.gov.ky/gazettes/extraordinary-gazettes';\n  schedule = 'Test Mode';\n}\n\nreturn [{\n  json: {\n    gazetteType: gazetteType,\n    gazetteUrl: gazetteUrl,\n    schedule: schedule,\n    date: today.toISOString().split('T')[0],\n    testMode: true\n  }\n}];"
+      },
+      "id": "determine_gazette_type",
+      "name": "Determine Gazette Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.gazetteUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "fetch_gazette_page",
+      "name": "Fetch Gazette Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse gazette content for liquidation data\nconst html = $json.data || '';\nconst gazetteType = $items('Determine Gazette Type')[0].json.gazetteType;\n\n// Mock data for demonstration - replace with actual HTML parsing\nlet companies = [];\n\nif (gazetteType === 'Extraordinary Gazette') {\n  companies = [\n    {\n      companyName: 'ABC Holdings Ltd.',\n      appointmentType: 'Voluntary Liquidation',\n      appointmentDate: '15th January 2025',\n      liquidatorReceiver: 'John Smith, Smith & Associates',\n      contactDetails: 'john.smith@example.com, +1-345-123-4567',\n      gazetteType: 'Extraordinary Gazette',\n      gazetteUrl: 'https://www.gov.ky/gazettes/extraordinary-gazettes'\n    },\n    {\n      companyName: 'XYZ Trading Co.',\n      appointmentType: 'Receivership',\n      appointmentDate: '20th January 2025',\n      liquidatorReceiver: 'Jane Doe, Doe Legal Services',\n      contactDetails: 'jane.doe@example.com, +1-345-987-6543',\n      gazetteType: 'Extraordinary Gazette',\n      gazetteUrl: 'https://www.gov.ky/gazettes/extraordinary-gazettes'\n    }\n  ];\n} else if (gazetteType === 'Regular Gazette') {\n  companies = [\n    {\n      companyName: 'DEF Industries Ltd.',\n      appointmentType: 'Voluntary Liquidation',\n      appointmentDate: '1st February 2025',\n      liquidatorReceiver: 'Mike Johnson, Johnson & Partners',\n      contactDetails: 'mike.johnson@example.com, +1-345-555-0123',\n      gazetteType: 'Regular Gazette',\n      gazetteUrl: 'https://www.gov.ky/gazettes/gazettes'\n    }\n  ];\n} else {\n  // Test mode\n  companies = [\n    {\n      companyName: 'TEST Company Ltd.',\n      appointmentType: 'Test Liquidation',\n      appointmentDate: 'Test Date',\n      liquidatorReceiver: 'Test Liquidator',\n      contactDetails: 'test@example.com',\n      gazetteType: 'Test Run',\n      gazetteUrl: 'https://www.gov.ky/gazettes/extraordinary-gazettes'\n    }\n  ];\n}\n\n// Filter for only Voluntary Liquidator and Creditor Notices\nconst filteredCompanies = companies.filter(company =>\n  company.appointmentType.includes('Liquidation') || company.appointmentType.includes('Receivership')\n);\n\n// Add processing timestamp\nconst now = new Date().toISOString();\nconst processedCompanies = filteredCompanies.map(company => ({\n  ...company,\n  processedAt: now,\n  addedAt: now\n}));\n\n// Output one item per company\nreturn processedCompanies.map(company => ({ json: company }));"
+      },
+      "id": "parse_gazette_data",
+      "name": "Parse Gazette Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the report as text\nconst companies = $input.all();\nconst gazetteType = $items('Determine Gazette Type')[0].json.gazetteType;\nconst date = $items('Determine Gazette Type')[0].json.date;\n\nlet report = `GAZETTE SCRAPER REPORT\\n`;\nreport += `========================\\n`;\nreport += `Date: ${date}\\n`;\nreport += `Gazette Type: ${gazetteType}\\n`;\nreport += `Companies Found: ${companies.length}\\n`;\nreport += `\\n`;\n\nif (companies.length > 0) {\n  report += `VOLUNTARY LIQUIDATOR AND CREDITOR NOTICES\\n`;\n  report += `==========================================\\n\\n`;\n  \n  companies.forEach((company, index) => {\n    report += `${index + 1}. ${company.json.companyName}\\n`;\n    report += `   Type: ${company.json.appointmentType}\\n`;\n    report += `   Date: ${company.json.appointmentDate}\\n`;\n    report += `   Liquidator/Receiver: ${company.json.liquidatorReceiver}\\n`;\n    report += `   Contact: ${company.json.contactDetails}\\n`;\n    report += `   Gazette: ${company.json.gazetteType}\\n`;\n    report += `   Processed: ${company.json.processedAt}\\n`;\n    report += `\\n`;\n  });\n} else {\n  report += `No companies found in liquidation notices.\\n`;\n}\n\nreport += `\\nReport generated at: ${new Date().toISOString()}\\n`;\nreport += `Source: ${gazetteType}\\n`;\n\nreturn [{\n  json: {\n    report: report,\n    companiesCount: companies.length,\n    gazetteType: gazetteType,\n    date: date,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "format_report",
+      "name": "Format Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "fileName": "gazette-report-{{ $json.date }}.txt",
+        "fileContent": "={{ $json.report }}",
+        "options": {}
+      },
+      "id": "write_to_file",
+      "name": "Write to File",
+      "type": "n8n-nodes-base.writeFile",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Determine Gazette Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Gazette Type": {
+      "main": [
+        [
+          {
+            "node": "Fetch Gazette Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Gazette Page": {
+      "main": [
+        [
+          {
+            "node": "Parse Gazette Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Gazette Data": {
+      "main": [
+        [
+          {
+            "node": "Format Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Report": {
+      "main": [
+        [
+          {
+            "node": "Write to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}

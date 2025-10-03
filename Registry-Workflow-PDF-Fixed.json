@@ -1,0 +1,88 @@
+{
+  "name": "Registry Workflow - PDF Fixed",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "trigger1",
+      "name": "Every 24 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "scrape",
+        "url": "https://judicial.ky/public-registers/?register=Financial+Services",
+        "scrapeOptions": {
+          "options": {
+            "formats": {
+              "format": [
+                {},
+                {
+                  "type": "html"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "scrape1",
+      "name": "Scrape Financial Services Registry",
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "credentials": {
+        "firecrawlApi": {
+          "id": "xSOxF3h5TQEtw3cZ",
+          "name": "Firecrawl account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract cases from Firecrawl with data-vw button attributes\nconst md = $json?.data?.markdown || \"\";\nconst html = $json?.data?.html || \"\";\n\n// Function to extract data-vw value from button for a specific cause\nfunction getButtonDataVw(cause) {\n  if (!cause) return null;\n  const idx = html.indexOf(cause);\n  if (idx === -1) return null;\n\n  const start = html.lastIndexOf(\"<tr\", idx);\n  const end = html.indexOf(\"</tr>\", idx);\n  if (start === -1 || end === -1) return null;\n\n  const row = html.slice(start, end + 5);\n  \n  // Extract data-vw attribute from View button\n  const vwMatch = row.match(/data-vw=\\\"([^\\\"]+)\\\"/i);\n  return vwMatch ? vwMatch[1] : null;\n}\n\n// Parse markdown table rows\nconst lines = md.split(\"\\n\").filter(l => l.startsWith(\"|\"));\nif (lines.length < 2) return [];\n\nconst dataLines = lines.filter(l => !l.includes(\"---\")).slice(1);\n\n// Build case objects with data-vw codes\nconst cases = dataLines.map(row => {\n  const cols = row.split(\"|\").map(c => c.trim());\n  const causeNumber = cols[1] || \"\";\n  const filingDate = cols[2] || \"\";\n  const title = cols[3] || \"\";\n  const subject = cols[4] || \"\";\n  const register = cols[5] || \"\";\n  const dataVw = getButtonDataVw(causeNumber);\n\n  return { causeNumber, filingDate, title, subject, register, dataVw };\n});\n\n// Filter for Financial Services + Petitions\nlet petitions = cases.filter(c => {\n  const subject = (c.subject || \"\").toLowerCase();\n  const register = (c.register || \"\").toLowerCase();\n  \n  const isFinancialServices = register.includes(\"financial\") && !register.includes(\"family\");\n  const isTargetPetition = subject.includes(\"winding up\") || subject.includes(\"petition\");\n  \n  return isFinancialServices && isTargetPetition && c.dataVw;\n});\n\n// Sort by priority\npetitions.sort((a, b) => {\n  const aIsWindingUp = (a.subject || \"\").toLowerCase().includes(\"winding up\");\n  const bIsWindingUp = (b.subject || \"\").toLowerCase().includes(\"winding up\");\n  if (aIsWindingUp && !bIsWindingUp) return -1;\n  if (!aIsWindingUp && bIsWindingUp) return 1;\n  return 0;\n});\n\nconst now = new Date().toISOString();\nreturn petitions.map(c => ({ json: { ...c, addedAt: now } }));"
+      },
+      "id": "parse1",
+      "name": "Parse & Filter Petitions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        }
+      },
+      "id": "sheets1",
+      "name": "Read Existing Cases",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [900, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AN61B811XT6j8wL2",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter for new cases only\nconst scraped = $items(\"Parse & Filter Petitions\

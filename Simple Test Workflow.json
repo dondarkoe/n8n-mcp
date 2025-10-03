@@ -1,0 +1,87 @@
+{
+  "name": "Simple Gazette Test - Text Output",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual_trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simple test data\nconst companies = [\n  {\n    companyName: 'TEST Company Ltd.',\n    appointmentType: 'Voluntary Liquidation',\n    appointmentDate: '20th January 2025',\n    liquidatorReceiver: 'Test Liquidator',\n    contactDetails: 'test@example.com, +1-345-123-4567',\n    gazetteType: 'Test Run',\n    gazetteUrl: 'https://www.gov.ky/gazettes/extraordinary-gazettes'\n  }\n];\n\nconst now = new Date().toISOString();\nconst processedCompanies = companies.map(company => ({\n  ...company,\n  processedAt: now,\n  addedAt: now\n}));\n\nreturn processedCompanies.map(company => ({ json: company }));"
+      },
+      "id": "generate_test_data",
+      "name": "Generate Test Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the report as text\nconst companies = $input.all();\n\nlet report = `GAZETTE SCRAPER TEST REPORT\\n`;\nreport += `============================\\n`;\nreport += `Date: ${new Date().toISOString().split('T')[0]}\\n`;\nreport += `Companies Found: ${companies.length}\\n`;\nreport += `\\n`;\n\nif (companies.length > 0) {\n  report += `VOLUNTARY LIQUIDATOR AND CREDITOR NOTICES\\n`;\n  report += `==========================================\\n\\n`;\n  \n  companies.forEach((company, index) => {\n    report += `${index + 1}. ${company.json.companyName}\\n`;\n    report += `   Type: ${company.json.appointmentType}\\n`;\n    report += `   Date: ${company.json.appointmentDate}\\n`;\n    report += `   Liquidator/Receiver: ${company.json.liquidatorReceiver}\\n`;\n    report += `   Contact: ${company.json.contactDetails}\\n`;\n    report += `   Gazette: ${company.json.gazetteType}\\n`;\n    report += `   Processed: ${company.json.processedAt}\\n`;\n    report += `\\n`;\n  });\n} else {\n  report += `No companies found in liquidation notices.\\n`;\n}\n\nreport += `\\nReport generated at: ${new Date().toISOString()}\\n`;\nreport += `Status: TEST SUCCESSFUL!\\n`;\n\nreturn [{\n  json: {\n    report: report,\n    companiesCount: companies.length,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "format_report",
+      "name": "Format Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fileName": "gazette-test-report-{{ $json.timestamp.split('T')[0] }}.txt",
+        "fileContent": "={{ $json.report }}",
+        "options": {}
+      },
+      "id": "write_to_file",
+      "name": "Write to File",
+      "type": "n8n-nodes-base.writeFile",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate Test Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Test Data": {
+      "main": [
+        [
+          {
+            "node": "Format Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Report": {
+      "main": [
+        [
+          {
+            "node": "Write to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
+

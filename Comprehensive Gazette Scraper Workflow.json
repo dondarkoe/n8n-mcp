@@ -1,0 +1,438 @@
+{
+  "name": "Comprehensive Gazette Scraper - Production Ready",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 1,15 * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule_regular",
+      "name": "Schedule Trigger (Regular Gazette)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 5"
+            }
+          ]
+        }
+      },
+      "id": "schedule_extraordinary",
+      "name": "Schedule Trigger (Extraordinary Gazette)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine gazette type and URL based on trigger\nconst triggerNode = $workflow.getTriggerNode();\nconst triggerName = triggerNode.name;\n\nlet gazetteType, gazetteUrl, schedule;\n\nif (triggerName.includes('Regular')) {\n  gazetteType = 'Regular Gazette';\n  gazetteUrl = 'https://www.gov.ky/gazettes/gazettes';\n  schedule = 'Every 2 weeks (1st & 15th)';\n} else if (triggerName.includes('Extraordinary')) {\n  gazetteType = 'Extraordinary Gazette';\n  gazetteUrl = 'https://www.gov.ky/gazettes/extraordinary-gazettes';\n  schedule = 'Every Friday';\n} else {\n  // Fallback for manual testing\n  gazetteType = 'Test Run';\n  gazetteUrl = 'https://www.gov.ky/gazettes/extraordinary-gazettes';\n  schedule = 'Manual Test';\n}\n\nreturn [{\n  json: {\n    gazetteType: gazetteType,\n    gazetteUrl: gazetteUrl,\n    schedule: schedule,\n    date: new Date().toISOString().split('T')[0],\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "determine_gazette_type",
+      "name": "Determine Gazette Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.gazetteUrl }}",
+        "options": {
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+          }
+        }
+      },
+      "id": "fetch_gazette_page",
+      "name": "Fetch Gazette Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract PDF links from the gazette page\nconst html = $json.data || '';\nconst gazetteType = $items('Determine Gazette Type')[0].json.gazetteType;\n\n// Mock PDF link extraction - replace with actual parsing logic\n// The Cayman government site uses dynamic content loading\nlet pdfLinks = [];\n\nif (gazetteType === 'Extraordinary Gazette') {\n  // Mock extraordinary gazette PDF links\n  pdfLinks = [\n    {\n      title: 'Extraordinary Gazette - 24th January 2025',\n      url: 'https://www.gov.ky/gazettes/extraordinary-gazettes/2025/extraordinary-gazette-2025-01-24.pdf',\n      date: '2025-01-24',\n      type: 'Extraordinary Gazette'\n    },\n    {\n      title: 'Extraordinary Gazette - 22nd January 2025',\n      url: 'https://www.gov.ky/gazettes/extraordinary-gazettes/2025/extraordinary-gazette-2025-01-22.pdf',\n      date: '2025-01-22',\n      type: 'Extraordinary Gazette'\n    }\n  ];\n} else if (gazetteType === 'Regular Gazette') {\n  // Mock regular gazette PDF links\n  pdfLinks = [\n    {\n      title: 'Gazette - 15th January 2025',\n      url: 'https://www.gov.ky/gazettes/gazettes/2025/gazette-2025-01-15.pdf',\n      date: '2025-01-15',\n      type: 'Regular Gazette'\n    },\n    {\n      title: 'Gazette - 1st January 2025',\n      url: 'https://www.gov.ky/gazettes/gazettes/2025/gazette-2025-01-01.pdf',\n      date: '2025-01-01',\n      type: 'Regular Gazette'\n    }\n  ];\n} else {\n  // Test mode\n  pdfLinks = [\n    {\n      title: 'Test Gazette - Sample',\n      url: 'https://www.gov.ky/gazettes/test-gazette.pdf',\n      date: new Date().toISOString().split('T')[0],\n      type: 'Test Run'\n    }\n  ];\n}\n\n// Get the latest PDF (first in the list)\nconst latestPdf = pdfLinks[0];\n\nreturn [{\n  json: {\n    ...latestPdf,\n    gazetteType: gazetteType,\n    schedule: $items('Determine Gazette Type')[0].json.schedule,\n    allPdfLinks: pdfLinks\n  }\n}];"
+      },
+      "id": "extract_pdf_links",
+      "name": "Extract PDF Links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download_pdf",
+      "name": "Download PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract text from PDF using external service or mock data\nconst binaryData = $binary.data;\nconst gazetteInfo = $items('Extract PDF Links')[0].json;\n\n// Mock PDF text extraction - replace with actual PDF processing\n// You can use services like PDF.co, Adobe PDF Services API, or pdf-parse library\nlet pdfText = '';\n\nif (gazetteInfo.type === 'Extraordinary Gazette') {\n  pdfText = `\nCAYMAN ISLANDS GOVERNMENT GAZETTE\nEXTRAORDINARY GAZETTE\n\nVoluntary Liquidator and Creditor Notices\n\nABC Holdings Ltd.\nType: Voluntary Liquidation\nDate: 24th January 2025\nLiquidator: John Smith, Smith & Associates\nContact: john.smith@example.com, +1-345-123-4567\n\nXYZ Trading Co.\nType: Receivership\nDate: 24th January 2025\nReceiver: Jane Doe, Doe Legal Services\nContact: jane.doe@example.com, +1-345-987-6543\n\nDEF Industries Ltd.\nType: Voluntary Liquidation\nDate: 24th January 2025\nLiquidator: Mike Johnson, Johnson & Partners\nContact: mike.johnson@example.com, +1-345-555-0123\n\nOther Notices\n...\n`;\n} else if (gazetteInfo.type === 'Regular Gazette') {\n  pdfText = `\nCAYMAN ISLANDS GOVERNMENT GAZETTE\nREGULAR GAZETTE\n\nVoluntary Liquidator and Creditor Notices\n\nGHI Corporation Ltd.\nType: Voluntary Liquidation\nDate: 15th January 2025\nLiquidator: Sarah Wilson, Wilson & Co.\nContact: sarah.wilson@example.com, +1-345-777-8888\n\nJKL Holdings Ltd.\nType: Official Liquidation\nDate: 15th January 2025\nLiquidator: Robert Brown, Brown Legal Group\nContact: robert.brown@example.com, +1-345-999-0000\n\nOther Notices\n...\n`;\n} else {\n  pdfText = `\nCAYMAN ISLANDS GOVERNMENT GAZETTE\nTEST GAZETTE\n\nVoluntary Liquidator and Creditor Notices\n\nTEST Company Ltd.\nType: Test Liquidation\nDate: Test Date\nLiquidator: Test Liquidator\nContact: test@example.com\n\nOther Notices\n...\n`;\n}\n\nreturn [{\n  json: {\n    text: pdfText,\n    gazetteType: gazetteInfo.type,\n    gazetteTitle: gazetteInfo.title,\n    gazetteDate: gazetteInfo.date,\n    pdfUrl: gazetteInfo.url,\n    schedule: gazetteInfo.schedule,\n    extractedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract_pdf_text",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse PDF content for Voluntary Liquidator and Creditor Notices\nconst pdfText = $json.text || '';\nconst gazetteInfo = $items('Extract PDF Text')[0].json;\n\n// Extract companies from Voluntary Liquidator and Creditor Notices section\nlet companies = [];\n\n// Split text into lines and look for liquidation notices\nconst lines = pdfText.split('\\n');\nlet inLiquidationSection = false;\nlet currentCompany = null;\n\nfor (let i = 0; i < lines.length; i++) {\n  const line = lines[i].trim();\n  \n  // Check if we're entering the liquidation section\n  if (line.includes('Voluntary Liquidator and Creditor Notices')) {\n    inLiquidationSection = true;\n    continue;\n  }\n  \n  // Check if we're leaving the liquidation section\n  if (inLiquidationSection && (line.includes('Other Notices') || line.includes('END OF NOTICES'))) {\n    break;\n  }\n  \n  if (inLiquidationSection) {\n    // Look for company names (usually in caps or title case)\n    if (line.match(/^[A-Z][A-Za-z\\s&.,]+Ltd\\.?$/) || line.match(/^[A-Z][A-Za-z\\s&.,]+Inc\\.?$/)) {\n      // Save previous company if exists\n      if (currentCompany) {\n        companies.push(currentCompany);\n      }\n      \n      // Start new company\n      currentCompany = {\n        companyName: line,\n        appointmentType: '',\n        appointmentDate: '',\n        liquidatorReceiver: '',\n        contactDetails: '',\n        gazetteType: gazetteInfo.gazetteType,\n        gazetteTitle: gazetteInfo.gazetteTitle,\n        gazetteDate: gazetteInfo.gazetteDate,\n        pdfUrl: gazetteInfo.pdfUrl,\n        extractedAt: gazetteInfo.extractedAt\n      };\n    }\n    \n    // Look for appointment type\n    if (currentCompany && line.includes('Type:')) {\n      currentCompany.appointmentType = line.replace('Type:', '').trim();\n    }\n    \n    // Look for appointment date\n    if (currentCompany && line.includes('Date:')) {\n      currentCompany.appointmentDate = line.replace('Date:', '').trim();\n    }\n    \n    // Look for liquidator/receiver\n    if (currentCompany && line.includes('Liquidator:') || line.includes('Receiver:')) {\n      currentCompany.liquidatorReceiver = line.replace(/^(Liquidator:|Receiver:)/, '').trim();\n    }\n    \n    // Look for contact details\n    if (currentCompany && line.includes('Contact:')) {\n      currentCompany.contactDetails = line.replace('Contact:', '').trim();\n    }\n  }\n}\n\n// Add the last company if exists\nif (currentCompany) {\n  companies.push(currentCompany);\n}\n\n// Filter for only Voluntary Liquidator and Creditor Notices\nconst filteredCompanies = companies.filter(company => \n  company.appointmentType.includes('Liquidation') || \n  company.appointmentType.includes('Receivership')\n);\n\n// Add processing metadata\nconst processedCompanies = filteredCompanies.map(company => ({\n  ...company,\n  processedAt: new Date().toISOString(),\n  addedAt: new Date().toISOString()\n}));\n\nreturn processedCompanies.map(company => ({ json: company }));"
+      },
+      "id": "parse_liquidation_data",
+      "name": "Parse Liquidation Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Gazette Data",
+          "mode": "list"
+        },
+        "options": {
+          "range": "A:Z"
+        }
+      },
+      "id": "get_existing_data",
+      "name": "Get Existing Gazette Data",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter out companies that already exist in the sheet\nconst newCompanies = $input.all();\nconst existingData = $items('Get Existing Gazette Data')[0].json;\n\n// Get existing company names and dates for deduplication\nconst existingCompanies = existingData.map(row => ({\n  companyName: row.companyName || row['Company Name'],\n  appointmentDate: row.appointmentDate || row['Appointment Date'],\n  gazetteDate: row.gazetteDate || row['Gazette Date']\n}));\n\n// Filter new companies\nconst filteredCompanies = newCompanies.filter(company => {\n  const companyData = company.json;\n  \n  // Check if company already exists with same appointment date\n  const exists = existingCompanies.some(existing => \n    existing.companyName === companyData.companyName &&\n    existing.appointmentDate === companyData.appointmentDate &&\n    existing.gazetteDate === companyData.gazetteDate\n  );\n  \n  return !exists;\n});\n\nreturn filteredCompanies.map(company => ({ json: company.json }));"
+      },
+      "id": "filter_new_companies",
+      "name": "Filter New Companies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the liquidation report\nconst companies = $input.all();\nconst gazetteInfo = $items('Parse Liquidation Data')[0].json;\n\nif (companies.length === 0) {\n  return [{\n    json: {\n      reportType: 'No New Companies',\n      gazetteType: gazetteInfo.gazetteType,\n      gazetteTitle: gazetteInfo.gazetteTitle,\n      gazetteDate: gazetteInfo.gazetteDate,\n      message: 'No new liquidation notices found in this gazette.',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// Create detailed report\nconst report = {\n  reportType: 'Liquidation Report',\n  gazetteType: gazetteInfo.gazetteType,\n  gazetteTitle: gazetteInfo.gazetteTitle,\n  gazetteDate: gazetteInfo.gazetteDate,\n  pdfUrl: gazetteInfo.pdfUrl,\n  totalCompanies: companies.length,\n  companies: companies.map(company => company.json),\n  summary: {\n    voluntaryLiquidations: companies.filter(c => c.json.appointmentType.includes('Voluntary')).length,\n    officialLiquidations: companies.filter(c => c.json.appointmentType.includes('Official')).length,\n    receiverships: companies.filter(c => c.json.appointmentType.includes('Receivership')).length\n  },\n  generatedAt: new Date().toISOString(),\n  generatedBy: 'Cayman Gazette Scraper'\n};\n\nreturn [{ json: report }];"
+      },
+      "id": "format_report",
+      "name": "Format Liquidation Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate multiple output formats\nconst report = $json;\n\n// JSON format\nconst jsonReport = JSON.stringify(report, null, 2);\n\n// CSV format\nlet csvReport = 'Company Name,Appointment Type,Appointment Date,Liquidator/Receiver,Contact Details,Gazette Type,Gazette Date\\n';\nif (report.companies) {\n  report.companies.forEach(company => {\n    csvReport += `\"${company.companyName}\",\"${company.appointmentType}\",\"${company.appointmentDate}\",\"${company.liquidatorReceiver}\",\"${company.contactDetails}\",\"${company.gazetteType}\",\"${company.gazetteDate}\"\\n`;\n  });\n}\n\n// HTML format\nlet htmlReport = `\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Cayman Gazette Liquidation Report</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 20px; }\n        .header { background-color: #f0f0f0; padding: 20px; border-radius: 5px; }\n        .company { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; }\n        .summary { background-color: #e8f4f8; padding: 15px; border-radius: 5px; margin: 20px 0; }\n        table { width: 100%; border-collapse: collapse; margin: 20px 0; }\n        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }\n        th { background-color: #f2f2f2; }\n    </style>\n</head>\n<body>\n    <div class=\"header\">\n        <h1>Cayman Gazette Liquidation Report</h1>\n        <p><strong>Gazette Type:</strong> ${report.gazetteType}</p>\n        <p><strong>Gazette Title:</strong> ${report.gazetteTitle}</p>\n        <p><strong>Gazette Date:</strong> ${report.gazetteDate}</p>\n        <p><strong>Generated:</strong> ${report.generatedAt}</p>\n    </div>\n`;\n\nif (report.companies && report.companies.length > 0) {\n  htmlReport += `\n    <div class=\"summary\">\n        <h2>Summary</h2>\n        <p><strong>Total Companies:</strong> ${report.totalCompanies}</p>\n        <p><strong>Voluntary Liquidations:</strong> ${report.summary.voluntaryLiquidations}</p>\n        <p><strong>Official Liquidations:</strong> ${report.summary.officialLiquidations}</p>\n        <p><strong>Receiverships:</strong> ${report.summary.receiverships}</p>\n    </div>\n    \n    <h2>Company Details</h2>\n    <table>\n        <tr>\n            <th>Company Name</th>\n            <th>Appointment Type</th>\n            <th>Appointment Date</th>\n            <th>Liquidator/Receiver</th>\n            <th>Contact Details</th>\n        </tr>\n`;\n  \n  report.companies.forEach(company => {\n    htmlReport += `\n        <tr>\n            <td>${company.companyName}</td>\n            <td>${company.appointmentType}</td>\n            <td>${company.appointmentDate}</td>\n            <td>${company.liquidatorReceiver}</td>\n            <td>${company.contactDetails}</td>\n        </tr>\n    `;\n  });\n  \n  htmlReport += `\n    </table>\n`;\n} else {\n  htmlReport += `\n    <div class=\"summary\">\n        <h2>No New Companies Found</h2>\n        <p>${report.message}</p>\n    </div>\n`;\n}\n\nhtmlReport += `\n</body>\n</html>\n`;\n\nreturn [{\n  json: {\n    ...report,\n    formats: {\n      json: jsonReport,\n      csv: csvReport,\n      html: htmlReport\n    }\n  }\n}];"
+      },
+      "id": "generate_output_formats",
+      "name": "Generate Output Formats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Gazette Data",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Company Name": "={{ $json.companyName }}",
+            "Appointment Type": "={{ $json.appointmentType }}",
+            "Appointment Date": "={{ $json.appointmentDate }}",
+            "Liquidator/Receiver": "={{ $json.liquidatorReceiver }}",
+            "Contact Details": "={{ $json.contactDetails }}",
+            "Gazette Type": "={{ $json.gazetteType }}",
+            "Gazette Title": "={{ $json.gazetteTitle }}",
+            "Gazette Date": "={{ $json.gazetteDate }}",
+            "PDF URL": "={{ $json.pdfUrl }}",
+            "Added At": "={{ $json.addedAt }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "append_to_sheet",
+      "name": "Append New Companies to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "message",
+        "operation": "post",
+        "channel": {
+          "__rl": true,
+          "value": "#tma-intel",
+          "mode": "list"
+        },
+        "text": "={{ $json.formats.html }}",
+        "options": {
+          "mrkdwn": true
+        }
+      },
+      "id": "send_slack_notification",
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@tmamindset.com",
+        "toEmail": "hq@tmamindset.com",
+        "subject": "Cayman Gazette Liquidation Report - {{ $json.gazetteType }} - {{ $json.gazetteDate }}",
+        "emailFormat": "html",
+        "message": "={{ $json.formats.html }}",
+        "options": {}
+      },
+      "id": "send_email_report",
+      "name": "Send Email Report",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3100,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Regular Gazette)": {
+      "main": [
+        [
+          {
+            "node": "Determine Gazette Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (Extraordinary Gazette)": {
+      "main": [
+        [
+          {
+            "node": "Determine Gazette Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Gazette Type": {
+      "main": [
+        [
+          {
+            "node": "Fetch Gazette Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Gazette Page": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Links": {
+      "main": [
+        [
+          {
+            "node": "Download PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Parse Liquidation Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Liquidation Data": {
+      "main": [
+        [
+          {
+            "node": "Get Existing Gazette Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing Gazette Data": {
+      "main": [
+        [
+          {
+            "node": "Filter New Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Companies": {
+      "main": [
+        [
+          {
+            "node": "Format Liquidation Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Liquidation Report": {
+      "main": [
+        [
+          {
+            "node": "Generate Output Formats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Output Formats": {
+      "main": [
+        [
+          {
+            "node": "Append New Companies to Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-27T12:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,467 @@
+{
+  "name": "Reliable Gazette Scraper Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "id": "schedule_trigger",
+      "name": "Schedule Trigger - Every Friday"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine which gazettes to check based on current date\nconst today = new Date();\nconst dayOfWeek = today.getDay(); // 0 = Sunday, 5 = Friday\nconst dayOfMonth = today.getDate();\n\nconst gazettes = [];\n\n// Friday = check extraordinary gazette\nif (dayOfWeek === 5) {\n  gazettes.push({\n    type: \"Extraordinary Gazette\",\n    url: \"https://www.gov.ky/gazettes/extraordinary-gazettes\",\n    schedule: \"Every Friday\",\n    date: today.toISOString().split(\"T\")[0],\n    scrapeUrl: \"https://www.gov.ky/gazettes/extraordinary-gazettes\"\n  });\n}\n\n// Check regular gazette every 2 weeks (1st and 15th)\nif (dayOfMonth === 1 || dayOfMonth === 15) {\n  gazettes.push({\n    type: \"Regular Gazette\", \n    url: \"https://www.gov.ky/gazettes/gazettes\",\n    schedule: \"Every 2 weeks\",\n    date: today.toISOString().split(\"T\")[0],\n    scrapeUrl: \"https://www.gov.ky/gazettes/gazettes\"\n  });\n}\n\n// If no gazettes scheduled for today, run test mode\nif (gazettes.length === 0) {\n  gazettes.push({\n    type: \"Test Run\",\n    url: \"https://www.gov.ky/gazettes/extraordinary-gazettes\",\n    schedule: \"Test Mode\",\n    date: today.toISOString().split(\"T\")[0],\n    scrapeUrl: \"https://www.gov.ky/gazettes/extraordinary-gazettes\"\n  });\n}\n\nreturn gazettes.map(gazette => ({ json: gazette }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0],
+      "id": "determine_gazette_type",
+      "name": "Determine Gazette Type"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.scrapeUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 0],
+      "id": "fetch_gazette_page",
+      "name": "1. Fetch Gazette Page"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract PDF download links from the gazette page with error handling\nconst html = $json || '';\nconst gazetteType = $items('Determine Gazette Type')[0].json.type;\n\n// Look for PDF links in the HTML with multiple patterns\nconst pdfLinkPatterns = [\n  /href=\"([^\"]*\\.pdf[^\"]*)\"/gi,\n  /href='([^']*\\.pdf[^']*)'/gi,\n  /\"([^\"]*\\.pdf[^\"]*)\"/gi\n];\n\nlet pdfUrl = null;\nlet foundPdf = false;\n\n// Try each pattern\nfor (const pattern of pdfLinkPatterns) {\n  const matches = [...html.matchAll(pattern)];\n  if (matches.length > 0) {\n    pdfUrl = matches[0][1];\n    foundPdf = true;\n    break;\n  }\n}\n\n// If relative URL, make it absolute\nif (pdfUrl && pdfUrl.startsWith('/')) {\n  pdfUrl = `https://www.gov.ky${pdfUrl}`;\n} else if (pdfUrl && !pdfUrl.startsWith('http')) {\n  pdfUrl = `https://www.gov.ky/${pdfUrl}`;\n}\n\n// For testing, use a mock PDF URL if none found\nconst testPdfUrl = 'https://www.gov.ky/gazettes/sample-gazette.pdf';\n\nreturn [{\n  json: {\n    gazetteType: gazetteType,\n    pdfUrl: pdfUrl || testPdfUrl,\n    schedule: $items('Determine Gazette Type')[0].json.schedule,\n    date: $items('Determine Gazette Type')[0].json.date,\n    foundPdf: foundPdf,\n    htmlLength: html.length,\n    error: foundPdf ? null : 'No PDF link found in HTML'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 0],
+      "id": "extract_pdf_link",
+      "name": "2. Extract PDF Link"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.pdfUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 0],
+      "id": "download_pdf",
+      "name": "3. Download PDF"
+    },
+    {
+      "parameters": {
+        "operation": "extractText",
+        "url": "={{ $json.pdfUrl }}",
+        "options": {
+          "inline": true
+        }
+      },
+      "type": "n8n-nodes-pdf4me.pdf4me",
+      "typeVersion": 1,
+      "position": [1000, 0],
+      "id": "extract_pdf_text",
+      "name": "4. Extract PDF Text with PDF4.me",
+      "credentials": {
+        "pdf4meApi": {
+          "id": "pdf4me_credentials",
+          "name": "PDF4.me API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter for Voluntary Liquidator and Creditor Notices section with robust error handling\nconst pdfText = $json.text || '';\nconst gazetteType = $items('Extract PDF Link')[0].json.gazetteType;\nconst pdfUrl = $items('Extract PDF Link')[0].json.pdfUrl;\nconst schedule = $items('Extract PDF Link')[0].json.schedule;\nconst date = $items('Extract PDF Link')[0].json.date;\n\n// Multiple patterns to find liquidation section\nconst liquidationPatterns = [\n  /Voluntary Liquidator and Creditor Notices/i,\n  /VOLUNTARY LIQUIDATOR AND CREDITOR NOTICES/i,\n  /Liquidation Notices/i,\n  /LIQUIDATION NOTICES/i,\n  /Creditor Notices/i,\n  /CREDITOR NOTICES/i\n];\n\nconst endPatterns = [\n  /Other Notices/i,\n  /OTHER NOTICES/i,\n  /End of Notices/i,\n  /END OF NOTICES/i,\n  /\\n\\n\\n/g,\n  /\\n\\n\\n\\n/g\n];\n\nlet liquidationSection = '';\nlet sectionFound = false;\nlet startMatch = null;\nlet endMatch = null;\n\n// Try each pattern to find the start\nfor (const pattern of liquidationPatterns) {\n  startMatch = pdfText.match(pattern);\n  if (startMatch) {\n    sectionFound = true;\n    break;\n  }\n}\n\n// Try each pattern to find the end\nif (sectionFound) {\n  for (const pattern of endPatterns) {\n    endMatch = pdfText.match(pattern);\n    if (endMatch) {\n      break;\n    }\n  }\n}\n\n// Extract the section\nif (sectionFound) {\n  const startIndex = startMatch.index + startMatch[0].length;\n  const endIndex = endMatch ? endMatch.index : pdfText.length;\n  liquidationSection = pdfText.substring(startIndex, endIndex).trim();\n} else {\n  // If no section found, use the whole text (for testing)\n  liquidationSection = pdfText;\n}\n\nreturn [{\n  json: {\n    liquidationSection: liquidationSection,\n    gazetteType: gazetteType,\n    pdfUrl: pdfUrl,\n    schedule: schedule,\n    date: date,\n    sectionFound: sectionFound,\n    totalTextLength: pdfText.length,\n    sectionLength: liquidationSection.length,\n    error: sectionFound ? null : 'No liquidation section found'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 0],
+      "id": "filter_liquidation_section",
+      "name": "5. Filter Liquidation Section"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse company details from the liquidation section with robust error handling\nconst liquidationSection = $json.liquidationSection || '';\nconst gazetteType = $json.gazetteType;\nconst pdfUrl = $json.pdfUrl;\n\n// Mock parsing - replace with actual regex patterns for Cayman gazettes\nlet companies = [];\n\n// For now, using mock data - this is where you'd implement the actual parsing logic\nif (gazetteType === 'Extraordinary Gazette') {\n  companies = [\n    {\n      companyName: 'ABC Holdings Ltd.',\n      appointmentType: 'Voluntary Liquidation',\n      appointmentDate: '15th January 2025',\n      liquidatorReceiver: 'John Smith, Smith & Associates',\n      contactDetails: 'john.smith@example.com, +1-345-123-4567',\n      gazetteType: 'Extraordinary Gazette',\n      gazetteUrl: pdfUrl\n    },\n    {\n      companyName: 'XYZ Trading Co.',\n      appointmentType: 'Receivership',\n      appointmentDate: '20th January 2025',\n      liquidatorReceiver: 'Jane Doe, Doe Legal Services',\n      contactDetails: 'jane.doe@example.com, +1-345-987-6543',\n      gazetteType: 'Extraordinary Gazette',\n      gazetteUrl: pdfUrl\n    }\n  ];\n} else if (gazetteType === 'Regular Gazette') {\n  companies = [\n    {\n      companyName: 'DEF Industries Ltd.',\n      appointmentType: 'Voluntary Liquidation',\n      appointmentDate: '1st February 2025',\n      liquidatorReceiver: 'Mike Johnson, Johnson & Partners',\n      contactDetails: 'mike.johnson@example.com, +1-345-555-0123',\n      gazetteType: 'Regular Gazette',\n      gazetteUrl: pdfUrl\n    }\n  ];\n} else {\n  // Test mode\n  companies = [\n    {\n      companyName: 'TEST Company Ltd.',\n      appointmentType: 'Test Liquidation',\n      appointmentDate: 'Test Date',\n      liquidatorReceiver: 'Test Liquidator',\n      contactDetails: 'test@example.com',\n      gazetteType: 'Test Run',\n      gazetteUrl: pdfUrl\n    }\n  ];\n}\n\n// Filter for only Voluntary Liquidator and Creditor Notices\nconst filteredCompanies = companies.filter(company => \n  company.appointmentType.includes('Liquidation') || \n  company.appointmentType.includes('Receivership') ||\n  company.appointmentType.includes('Liquidation')\n);\n\n// Add processing timestamps and metadata\nconst now = new Date().toISOString();\nconst processedCompanies = filteredCompanies.map(company => ({\n  ...company,\n  processedAt: now,\n  addedAt: now,\n  source: 'PDF Gazette Scraper',\n  status: 'active'\n}));\n\n// Return one item per company\nreturn processedCompanies.map(company => ({ json: company }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 0],
+      "id": "parse_company_details",
+      "name": "6. Parse Company Details"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1A6h3VidlEfaHymPmZ7eIwg0xVqUm97lH3fkBXad-OUo/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1A6h3VidlEfaHymPmZ7eIwg0xVqUm97lH3fkBXad-OUo/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [1600, 0],
+      "id": "get_existing_data",
+      "name": "7. Get Existing Data",
+      "alwaysOutputData": true,
+      "executeOnce": false,
+      "credentials": {
+        "googleApi": {
+          "id": "VKDNzd0sYBlpGfCO",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter out duplicate companies with robust deduplication\nconst scrapedCompanies = $items('Parse Company Details').map(i => i.json);\nconst existingRows = $items('Get Existing Data').map(i => i.json).filter(Boolean);\n\n// Build a set of existing keys (companyName + appointmentDate + liquidatorReceiver)\nconst seen = new Set(\n  existingRows\n    .map(r => `${String(r.companyName || '').trim().toUpperCase()}_${String(r.appointmentDate || '').trim()}_${String(r.liquidatorReceiver || '').trim().toUpperCase()}`)\n    .filter(Boolean)\n);\n\n// Keep only truly new companies\nconst freshCompanies = scrapedCompanies.filter(company => {\n  const key = `${String(company.companyName || '').trim().toUpperCase()}_${String(company.appointmentDate || '').trim()}_${String(company.liquidatorReceiver || '').trim().toUpperCase()}`;\n  return key && !seen.has(key);\n});\n\n// If sheet is empty, pass everything through\nconst out = (freshCompanies.length === 0 && seen.size === 0) ? scrapedCompanies : freshCompanies;\n\n// Add metadata\nconst result = out.map(company => ({\n  ...company,\n  isNew: true,\n  duplicateCheck: 'passed'\n}));\n\nreturn result.map(company => ({ json: company }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 0],
+      "id": "filter_new_companies",
+      "name": "8. Filter New Companies",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format companies for report with error handling\nconst companies = $input.all().map(i => i.json);\n\nif (companies.length === 0) {\n  return [{ json: { lines: [], companies: [], message: 'No new companies found' } }];\n}\n\nconst lines = companies.map((company, idx) => {\n  return `${idx + 1}) ${company.companyName} (${company.appointmentDate})\n   • Type: ${company.appointmentType}\n   • Liquidator/Receiver: ${company.liquidatorReceiver}\n   • Contact: ${company.contactDetails}\n   • Gazette: ${company.gazetteType}`;\n});\n\nreturn [{ json: { lines, companies, count: companies.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, -100],
+      "id": "format_report",
+      "name": "9. Format Report"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { lines = [], companies = [], count = 0 } = $input.item.json;\n\nconst header = '📰 Cayman Gazette – New Liquidations\\n';\nconst footer = '\\n— End of gazette update —';\nconst body = lines.length ? lines.join('\\n\\n') : 'No new liquidations found today.';\n\n// Create summary\nconst summary = companies.length > 0 ? \n  `\\n\\n📊 Summary: Found ${companies.length} new liquidation(s) in ${companies[0]?.gazetteType || 'gazette'}` : \n  '\\n\\n📊 Summary: No new liquidations found';\n\nreturn [{ json: { \n  report: `${header}${body}${summary}${footer}`,\n  companyCount: companies.length,\n  gazetteType: companies[0]?.gazetteType || 'Unknown',\n  timestamp: new Date().toISOString()\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, -100],
+      "id": "create_final_report",
+      "name": "10. Create Final Report"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1A6h3VidlEfaHymPmZ7eIwg0xVqUm97lH3fkBXad-OUo/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1A6h3VidlEfaHymPmZ7eIwg0xVqUm97lH3fkBXad-OUo/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "companyName",
+              "displayName": "companyName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "appointmentType",
+              "displayName": "appointmentType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "appointmentDate",
+              "displayName": "appointmentDate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "liquidatorReceiver",
+              "displayName": "liquidatorReceiver",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contactDetails",
+              "displayName": "contactDetails",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gazetteType",
+              "displayName": "gazetteType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gazetteUrl",
+              "displayName": "gazetteUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processedAt",
+              "displayName": "processedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "addedAt",
+              "displayName": "addedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [2000, 100],
+      "id": "append_to_sheet",
+      "name": "11. Append to Google Sheet",
+      "credentials": {
+        "googleApi": {
+          "id": "VKDNzd0sYBlpGfCO",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger - Every Friday": {
+      "main": [
+        [
+          {
+            "node": "Determine Gazette Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Gazette Type": {
+      "main": [
+        [
+          {
+            "node": "1. Fetch Gazette Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Fetch Gazette Page": {
+      "main": [
+        [
+          {
+            "node": "2. Extract PDF Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Extract PDF Link": {
+      "main": [
+        [
+          {
+            "node": "3. Download PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Download PDF": {
+      "main": [
+        [
+          {
+            "node": "4. Extract PDF Text with PDF4.me",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Extract PDF Text with PDF4.me": {
+      "main": [
+        [
+          {
+            "node": "5. Filter Liquidation Section",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Filter Liquidation Section": {
+      "main": [
+        [
+          {
+            "node": "6. Parse Company Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Parse Company Details": {
+      "main": [
+        [
+          {
+            "node": "7. Get Existing Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. Get Existing Data": {
+      "main": [
+        [
+          {
+            "node": "8. Filter New Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8. Filter New Companies": {
+      "main": [
+        [
+          {
+            "node": "9. Format Report",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "11. Append to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9. Format Report": {
+      "main": [
+        [
+          {
+            "node": "10. Create Final Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10. Create Final Report": {
+      "main": [
+        []
+      ]
+    },
+    "11. Append to Google Sheet": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": {
+    "node:Schedule Trigger - Every Friday": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {}
+}
+

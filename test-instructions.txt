@@ -1,0 +1,15 @@
+
+# Test commands you can run:
+
+# 1. Start the MCP server with n8n integration:
+npm run start:http
+
+# 2. Test the connection (in another terminal):
+curl http://localhost:3000/health
+
+# 3. Test n8n API tools:
+# You can now use tools like:
+# - n8n_list_workflows()
+# - n8n_create_workflow({...})
+# - search_nodes({query: 'slack'})
+

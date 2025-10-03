@@ -127,6 +127,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@mendable/n8n-nodes-firecrawl": "^1.0.5",
     "@modelcontextprotocol/sdk": "^1.13.2",
     "@n8n/n8n-nodes-langchain": "^1.111.1",
     "@supabase/supabase-js": "^2.57.4",
