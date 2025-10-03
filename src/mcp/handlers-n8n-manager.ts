@@ -6,7 +6,9 @@ import {
   WorkflowConnection,
   ExecutionStatus,
   WebhookRequest,
-  McpToolResponse
+  McpToolResponse,
+  ExecutionFilterOptions,
+  ExecutionMode
 } from '../types/n8n-api';
 import {
   validateWorkflowStructure,
@@ -16,7 +18,9 @@ import {
 import {
   N8nApiError,
   N8nNotFoundError,
-  getUserFriendlyErrorMessage
+  getUserFriendlyErrorMessage,
+  formatExecutionError,
+  formatNoExecutionError
 } from '../utils/n8n-errors';
 import { logger } from '../utils/logger';
 import { z } from 'zod';
@@ -24,6 +28,7 @@ import { WorkflowValidator } from '../services/workflow-validator';
 import { EnhancedConfigValidator } from '../services/enhanced-config-validator';
 import { NodeRepository } from '../database/node-repository';
 import { InstanceContext, validateInstanceContext } from '../types/instance-context';
+import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 import { WorkflowAutoFixer, AutoFixConfig } from '../services/workflow-auto-fixer';
 import { ExpressionFormatValidator } from '../services/expression-format-validator';
 import { handleUpdatePartialWorkflow } from './handlers-workflow-diff';
@@ -36,6 +41,7 @@ import {
   withRetry,
   getCacheStatistics
 } from '../utils/cache-utils';
+import { processExecution } from '../services/execution-processor';
 
 // Singleton n8n API client instance (backward compatibility)
 let defaultApiClient: N8nApiClient | null = null;
@@ -277,8 +283,34 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
   try {
     const client = ensureApiConfigured(context);
     const input = createWorkflowSchema.parse(args);
-    
-    // Validate workflow structure
+
+    // Proactively detect SHORT form node types (common mistake)
+    const shortFormErrors: string[] = [];
+    input.nodes?.forEach((node: any, index: number) => {
+      if (node.type?.startsWith('nodes-base.') || node.type?.startsWith('nodes-langchain.')) {
+        const fullForm = node.type.startsWith('nodes-base.')
+          ? node.type.replace('nodes-base.', 'n8n-nodes-base.')
+          : node.type.replace('nodes-langchain.', '@n8n/n8n-nodes-langchain.');
+        shortFormErrors.push(
+          `Node ${index} ("${node.name}") uses SHORT form "${node.type}". ` +
+          `The n8n API requires FULL form. Change to "${fullForm}"`
+        );
+      }
+    });
+
+    if (shortFormErrors.length > 0) {
+      telemetry.trackWorkflowCreation(input, false);
+      return {
+        success: false,
+        error: 'Node type format error: n8n API requires FULL form node types',
+        details: {
+          errors: shortFormErrors,
+          hint: 'Use n8n-nodes-base.* instead of nodes-base.* for standard nodes'
+        }
+      };
+    }
+
+    // Validate workflow structure (n8n API expects FULL form: n8n-nodes-base.*)
     const errors = validateWorkflowStructure(input);
     if (errors.length > 0) {
       // Track validation failure
@@ -291,7 +323,7 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
       };
     }
 
-    // Create workflow
+    // Create workflow (n8n API expects node types in FULL form)
     const workflow = await client.createWorkflow(input);
 
     // Track successful workflow creation
@@ -517,12 +549,12 @@ export async function handleUpdateWorkflow(args: unknown, context?: InstanceCont
     const client = ensureApiConfigured(context);
     const input = updateWorkflowSchema.parse(args);
     const { id, ...updateData } = input;
-    
+
     // If nodes/connections are being updated, validate the structure
     if (updateData.nodes || updateData.connections) {
       // Fetch current workflow if only partial update
       let fullWorkflow = updateData as Partial<Workflow>;
-      
+
       if (!updateData.nodes || !updateData.connections) {
         const current = await client.getWorkflow(id);
         fullWorkflow = {
@@ -530,7 +562,8 @@ export async function handleUpdateWorkflow(args: unknown, context?: InstanceCont
           ...updateData
         };
       }
-      
+
+      // Validate workflow structure (n8n API expects FULL form: n8n-nodes-base.*)
       const errors = validateWorkflowStructure(fullWorkflow);
       if (errors.length > 0) {
         return {
@@ -939,7 +972,7 @@ export async function handleTriggerWebhookWorkflow(args: unknown, context?: Inst
   try {
     const client = ensureApiConfigured(context);
     const input = triggerWebhookSchema.parse(args);
-    
+
     const webhookRequest: WebhookRequest = {
       webhookUrl: input.webhookUrl,
       httpMethod: input.httpMethod || 'POST',
@@ -947,9 +980,9 @@ export async function handleTriggerWebhookWorkflow(args: unknown, context?: Inst
       headers: input.headers,
       waitForResponse: input.waitForResponse ?? true
     };
-    
+
     const response = await client.triggerWebhook(webhookRequest);
-    
+
     return {
       success: true,
       data: response,
@@ -963,8 +996,35 @@ export async function handleTriggerWebhookWorkflow(args: unknown, context?: Inst
         details: { errors: error.errors }
       };
     }
-    
+
     if (error instanceof N8nApiError) {
+      // Try to extract execution context from error response
+      const errorData = error.details as any;
+      const executionId = errorData?.executionId || errorData?.id || errorData?.execution?.id;
+      const workflowId = errorData?.workflowId || errorData?.workflow?.id;
+
+      // If we have execution ID, provide specific guidance with n8n_get_execution
+      if (executionId) {
+        return {
+          success: false,
+          error: formatExecutionError(executionId, workflowId),
+          code: error.code,
+          executionId,
+          workflowId: workflowId || undefined
+        };
+      }
+
+      // No execution ID available - workflow likely didn't start
+      // Provide guidance to check recent executions
+      if (error.code === 'SERVER_ERROR' || error.statusCode && error.statusCode >= 500) {
+        return {
+          success: false,
+          error: formatNoExecutionError(),
+          code: error.code
+        };
+      }
+
+      // For other errors (auth, validation, etc), use standard message
       return {
         success: false,
         error: getUserFriendlyErrorMessage(error),
@@ -972,7 +1032,7 @@ export async function handleTriggerWebhookWorkflow(args: unknown, context?: Inst
         details: error.details as Record<string, unknown> | undefined
       };
     }
-    
+
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred'
@@ -983,16 +1043,72 @@ export async function handleTriggerWebhookWorkflow(args: unknown, context?: Inst
 export async function handleGetExecution(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
     const client = ensureApiConfigured(context);
-    const { id, includeData } = z.object({ 
+
+    // Parse and validate input with new parameters
+    const schema = z.object({
       id: z.string(),
+      // New filtering parameters
+      mode: z.enum(['preview', 'summary', 'filtered', 'full']).optional(),
+      nodeNames: z.array(z.string()).optional(),
+      itemsLimit: z.number().optional(),
+      includeInputData: z.boolean().optional(),
+      // Legacy parameter (backward compatibility)
       includeData: z.boolean().optional()
-    }).parse(args);
-    
-    const execution = await client.getExecution(id, includeData || false);
-    
+    });
+
+    const params = schema.parse(args);
+    const { id, mode, nodeNames, itemsLimit, includeInputData, includeData } = params;
+
+    /**
+     * Map legacy includeData parameter to mode for backward compatibility
+     *
+     * Legacy behavior:
+     * - includeData: undefined -> minimal execution summary (no data)
+     * - includeData: false -> minimal execution summary (no data)
+     * - includeData: true -> full execution data
+     *
+     * New behavior mapping:
+     * - includeData: undefined -> no mode (minimal)
+     * - includeData: false -> no mode (minimal)
+     * - includeData: true -> mode: 'summary' (2 items per node, not full)
+     *
+     * Note: Legacy true behavior returned ALL data, which could exceed token limits.
+     * New behavior caps at 2 items for safety. Users can use mode: 'full' for old behavior.
+     */
+    let effectiveMode = mode;
+    if (!effectiveMode && includeData !== undefined) {
+      effectiveMode = includeData ? 'summary' : undefined;
+    }
+
+    // Determine if we need to fetch full data from API
+    // We fetch full data if any mode is specified (including preview) or legacy includeData is true
+    // Preview mode needs the data to analyze structure and generate recommendations
+    const fetchFullData = effectiveMode !== undefined || includeData === true;
+
+    // Fetch execution from n8n API
+    const execution = await client.getExecution(id, fetchFullData);
+
+    // If no filtering options specified, return original execution (backward compatibility)
+    if (!effectiveMode && !nodeNames && itemsLimit === undefined) {
+      return {
+        success: true,
+        data: execution
+      };
+    }
+
+    // Apply filtering using ExecutionProcessor
+    const filterOptions: ExecutionFilterOptions = {
+      mode: effectiveMode,
+      nodeNames,
+      itemsLimit,
+      includeInputData
+    };
+
+    const processedExecution = processExecution(execution, filterOptions);
+
     return {
       success: true,
-      data: execution
+      data: processedExecution
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1002,7 +1118,7 @@ export async function handleGetExecution(args: unknown, context?: InstanceContex
         details: { errors: error.errors }
       };
     }
-    
+
     if (error instanceof N8nApiError) {
       return {
         success: false,
@@ -1010,7 +1126,7 @@ export async function handleGetExecution(args: unknown, context?: InstanceContex
         code: error.code
       };
     }
-    
+
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred'

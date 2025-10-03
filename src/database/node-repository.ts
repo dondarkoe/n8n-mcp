@@ -1,6 +1,7 @@
 import { DatabaseAdapter } from './database-adapter';
 import { ParsedNode } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
+import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 
 export class NodeRepository {
   private db: DatabaseAdapter;
@@ -50,33 +51,30 @@ export class NodeRepository {
   
   /**
    * Get node with proper JSON deserialization
+   * Automatically normalizes node type to full form for consistent lookups
    */
   getNode(nodeType: string): any {
+    // Normalize to full form first for consistent lookups
+    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
+
     const row = this.db.prepare(`
       SELECT * FROM nodes WHERE node_type = ?
-    `).get(nodeType) as any;
-    
+    `).get(normalizedType) as any;
+
+    // Fallback: try original type if normalization didn't help (e.g., community nodes)
+    if (!row && normalizedType !== nodeType) {
+      const originalRow = this.db.prepare(`
+        SELECT * FROM nodes WHERE node_type = ?
+      `).get(nodeType) as any;
+
+      if (originalRow) {
+        return this.parseNodeRow(originalRow);
+      }
+    }
+
     if (!row) return null;
-    
-    return {
-      nodeType: row.node_type,
-      displayName: row.display_name,
-      description: row.description,
-      category: row.category,
-      developmentStyle: row.development_style,
-      package: row.package_name,
-      isAITool: Number(row.is_ai_tool) === 1,
-      isTrigger: Number(row.is_trigger) === 1,
-      isWebhook: Number(row.is_webhook) === 1,
-      isVersioned: Number(row.is_versioned) === 1,
-      version: row.version,
-      properties: this.safeJsonParse(row.properties_schema, []),
-      operations: this.safeJsonParse(row.operations, []),
-      credentials: this.safeJsonParse(row.credentials_required, []),
-      hasDocumentation: !!row.documentation,
-      outputs: row.outputs ? this.safeJsonParse(row.outputs, null) : null,
-      outputNames: row.output_names ? this.safeJsonParse(row.output_names, null) : null
-    };
+
+    return this.parseNodeRow(row);
   }
   
   /**
@@ -376,5 +374,79 @@ export class NodeRepository {
     }
 
     return allResources;
+  }
+
+  /**
+   * Get default values for node properties
+   */
+  getNodePropertyDefaults(nodeType: string): Record<string, any> {
+    try {
+      const node = this.getNode(nodeType);
+      if (!node || !node.properties) return {};
+
+      const defaults: Record<string, any> = {};
+
+      for (const prop of node.properties) {
+        if (prop.name && prop.default !== undefined) {
+          defaults[prop.name] = prop.default;
+        }
+      }
+
+      return defaults;
+    } catch (error) {
+      // Log error and return empty defaults rather than throwing
+      console.error(`Error getting property defaults for ${nodeType}:`, error);
+      return {};
+    }
+  }
+
+  /**
+   * Get the default operation for a specific resource
+   */
+  getDefaultOperationForResource(nodeType: string, resource?: string): string | undefined {
+    try {
+      const node = this.getNode(nodeType);
+      if (!node || !node.properties) return undefined;
+
+      // Find operation property that's visible for this resource
+      for (const prop of node.properties) {
+        if (prop.name === 'operation') {
+          // If there's a resource dependency, check if it matches
+          if (resource && prop.displayOptions?.show?.resource) {
+            // Validate displayOptions structure
+            const resourceDep = prop.displayOptions.show.resource;
+            if (!Array.isArray(resourceDep) && typeof resourceDep !== 'string') {
+              continue; // Skip malformed displayOptions
+            }
+
+            const allowedResources = Array.isArray(resourceDep)
+              ? resourceDep
+              : [resourceDep];
+
+            if (!allowedResources.includes(resource)) {
+              continue; // This operation property doesn't apply to our resource
+            }
+          }
+
+          // Return the default value if it exists
+          if (prop.default !== undefined) {
+            return prop.default;
+          }
+
+          // If no default but has options, return the first option's value
+          if (prop.options && Array.isArray(prop.options) && prop.options.length > 0) {
+            const firstOption = prop.options[0];
+            return typeof firstOption === 'string' ? firstOption : firstOption.value;
+          }
+        }
+      }
+    } catch (error) {
+      // Log error and return undefined rather than throwing
+      // This ensures validation continues even with malformed node data
+      console.error(`Error getting default operation for ${nodeType}:`, error);
+      return undefined;
+    }
+
+    return undefined;
   }
 }
