@@ -1,0 +1,574 @@
+{
+  "name": "Cayman Islands Registry Scraper & Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "schedule1",
+      "name": "Daily Schedule (8 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "scrape",
+        "url": "https://judicial.ky/public-registers/?register=Financial+Services",
+        "scrapeOptions": {
+          "options": {
+            "formats": {
+              "format": [
+                {},
+                {
+                  "type": "html"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "firecrawl1",
+      "name": "Scrape Financial Services Registry",
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "credentials": {
+        "firecrawlApi": {
+          "id": "xSOxF3h5TQEtw3cZ",
+          "name": "Firecrawl account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract cases from Firecrawl with data-vw button attributes and WordPress nonce\nconst md = $json?.data?.markdown || \"\";\nconst html = $json?.data?.html || \"\";\n\n// Extract WordPress nonce for AJAX calls\nconst nonceMatch = html.match(/ajax_nonce[\"'\\s:]+[\"']([a-f0-9]+)[\"']/i);\nconst wpNonce = nonceMatch ? nonceMatch[1] : null;\n\n// Function to extract data-vw value from button for a specific cause\nfunction getButtonDataVw(cause) {\n  if (!cause) return null;\n  const idx = html.indexOf(cause);\n  if (idx === -1) return null;\n\n  const start = html.lastIndexOf(\"<tr\", idx);\n  const end = html.indexOf(\"</tr>\", idx);\n  if (start === -1 || end === -1) return null;\n\n  const row = html.slice(start, end + 5);\n  \n  // Extract data-vw attribute from View button\n  const vwMatch = row.match(/data-vw=\\\"([^\\\"]+)\\\"/i);\n  return vwMatch ? vwMatch[1] : null;\n}\n\n// Parse markdown table rows\nconst lines = md.split(\"\\n\").filter(l => l.startsWith(\"|\"));\nif (lines.length < 2) return [];\n\nconst dataLines = lines.filter(l => !l.includes(\"---\")).slice(1);\n\n// Build case objects with data-vw codes and nonce\nconst cases = dataLines.map(row => {\n  const cols = row.split(\"|\").map(c => c.trim());\n  const causeNumber = cols[1] || \"\";\n  const filingDate = cols[2] || \"\";\n  const title = cols[3] || \"\";\n  const subject = cols[4] || \"\";\n  const register = cols[5] || \"\";\n  const dataVw = getButtonDataVw(causeNumber);\n\n  return { causeNumber, filingDate, title, subject, register, dataVw, wpNonce };\n});\n\n// Filter for Financial Services + Petitions\nlet petitions = cases.filter(c => {\n  const subject = (c.subject || \"\").toLowerCase();\n  const register = (c.register || \"\").toLowerCase();\n  \n  const isFinancialServices = register.includes(\"financial\") && !register.includes(\"family\");\n  const isTargetPetition = subject.includes(\"winding up\") || subject.includes(\"petition\");\n  \n  return isFinancialServices && isTargetPetition && c.dataVw && c.wpNonce;\n});\n\n// Sort by priority: Winding Up petitions first\npetitions.sort((a, b) => {\n  const aIsWindingUp = (a.subject || \"\").toLowerCase().includes(\"winding up\");\n  const bIsWindingUp = (b.subject || \"\").toLowerCase().includes(\"winding up\");\n  if (aIsWindingUp && !bIsWindingUp) return -1;\n  if (!aIsWindingUp && bIsWindingUp) return 1;\n  return 0;\n});\n\nconst now = new Date().toISOString();\nreturn petitions.map(c => ({ json: { ...c, scrapedAt: now } }));"
+      },
+      "id": "parse1",
+      "name": "Parse & Filter Petitions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        }
+      },
+      "id": "sheets1",
+      "name": "Read Existing Cases",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [900, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AN61B811XT6j8wL2",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter for new cases only\nconst scraped = $items(\"Parse & Filter Petitions\").map(i => i.json);\nconst existingRows = $items(\"Read Existing Cases\").map(i => i.json).filter(Boolean);\n\n// Build a set of existing case numbers\nconst seen = new Set(\n  existingRows\n    .map(r => String(r.causeNumber || \"\").trim().toUpperCase())\n    .filter(Boolean)\n);\n\n// Keep only truly new cases\nconst fresh = scraped.filter(c => {\n  const key = String(c.causeNumber || \"\").trim().toUpperCase();\n  return key && !seen.has(key);\n});\n\n// If no existing data, pass everything through\nconst out = (fresh.length === 0 && seen.size === 0) ? scraped : fresh;\n\nreturn out.map(c => ({ json: c }));"
+      },
+      "id": "filter1",
+      "name": "Filter New Cases Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "url": "https://judicial.ky/wp-admin/admin-ajax.php",
+        "method": "POST",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "type": "string",
+              "name": "action",
+              "value": "get_bfile"
+            },
+            {
+              "type": "string",
+              "name": "fid",
+              "value": "286692767087"
+            },
+            {
+              "type": "string",
+              "name": "fname",
+              "value": "={{ $json.dataVw }}"
+            },
+            {
+              "type": "string",
+              "name": "security",
+              "value": "={{ $json.wpNonce }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http1",
+      "name": "Get Box File via WordPress AJAX",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract Box.com download URL from WordPress AJAX response\nconst caseData = $json;\nconst response = $prevNode.json;\n\nif (!response.success || !response.data) {\n  throw new Error(`WordPress AJAX failed for case ${caseData.causeNumber}: ${JSON.stringify(response)}`);\n}\n\nconst boxFileId = response.data.fid;\nconst token = response.data.t;\n\n// Construct Box.com download URL  \nconst downloadUrl = `https://api.box.com/2.0/files/${boxFileId}/content?access_token=${token}`;\n\nreturn [{\n  json: {\n    ...caseData,\n    pdfUrl: downloadUrl,\n    boxFileId: boxFileId,\n    extractedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract1",
+      "name": "Extract Box Download URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.pdfUrl }}",
+        "responseFormat": "file",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download1",
+      "name": "Download PDF from Box.com",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convert PDF to base64 for Vision API\nconst pdfBuffer = $binary.data;\nconst base64Pdf = pdfBuffer.toString('base64');\n\nconst caseData = $prevNode.json;\n\nreturn [{\n  binary: {\n    data: pdfBuffer,\n    fileName: `${caseData.causeNumber}.pdf`,\n    mimeType: 'application/pdf'\n  },\n  json: {\n    ...caseData,\n    base64Pdf: base64Pdf,\n    pdfSize: pdfBuffer.length\n  }\n}];"
+      },
+      "id": "convert1",
+      "name": "Convert PDF to Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "messageType": "multiModal",
+          "multiModalMessages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Analyze this legal petition PDF and extract the following 5 data points. Return the information in a structured JSON format.\n\n**Case Information:**\n- Cause Number: {{$json.causeNumber}}\n- Filing Date: {{$json.filingDate}}\n- Title: {{$json.title}}\n\n**Required Extractions:**\n\n1. **PARTY DETAILS** - Extract:\n   - Company name and registration details\n   - Registered office provider\n   - Directors and their details\n   - Shareholders and their details\n   - Petitioner name and details\n\n2. **TIMELINE OF EVENTS** - Extract chronological events with dates:\n   - List all key events in chronological order\n   - Include dates for each event\n   - Focus on legal proceedings, filings, and key actions\n\n3. **FINANCIAL STATUS** - Extract:\n   - Debt amounts and creditors\n   - Asset values and descriptions\n   - Financial obligations and amounts\n   - Any monetary figures mentioned\n\n4. **INSOLVENCY PRACTITIONERS** - Extract:\n   - Liquidator names and firms\n   - Any insolvency practitioners mentioned\n   - Their roles and appointments\n\n5. **LAW FIRM** - Extract:\n   - Law firm that filed the petition\n   - Solicitor names involved\n   - Legal representatives mentioned\n\n**Instructions:**\n- Read the PDF carefully and extract ALL relevant information\n- If information is not found for a section, use \"Not specified in document\"\n- Return data in valid JSON format only\n- Be thorough but concise\n- Focus on factual information from the document"
+                },
+                {
+                  "type": "file",
+                  "fileName": "{{ $binary.data.fileName }}",
+                  "data": "{{ $binary.data }}"
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 2000,
+          "temperature": 0.1
+        }
+      },
+      "id": "openai1",
+      "name": "GPT-4o Vision PDF Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 4.3,
+      "position": [2220, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_API_KEY",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse GPT-4o response and structure the data\nconst caseData = $prevNode.json;\nconst aiResponse = $json;\n\n// Try to parse JSON response from GPT-4o\nlet extractedData;\ntry {\n  // GPT-4o might return JSON in a code block or wrapped in text\n  const jsonMatch = aiResponse.choices[0].message.content.match(/```json\\s*([\\s\\S]*?)\\s*```/);\n  if (jsonMatch) {\n    extractedData = JSON.parse(jsonMatch[1]);\n  } else {\n    // Try parsing the entire response as JSON\n    extractedData = JSON.parse(aiResponse.choices[0].message.content);\n  }\n} catch (error) {\n  console.log('Failed to parse GPT response as JSON:', aiResponse.choices[0].message.content);\n  extractedData = {\n    partyDetails: 'Error parsing AI response',\n    timeline: 'Error parsing AI response',\n    financialStatus: 'Error parsing AI response',\n    insolvencyPractitioners: 'Error parsing AI response',\n    lawFirm: 'Error parsing AI response',\n    rawResponse: aiResponse.choices[0].message.content\n  };\n}\n\nconst now = new Date().toISOString();\n\nreturn [{\n  json: {\n    // Original case data\n    causeNumber: caseData.causeNumber,\n    filingDate: caseData.filingDate,\n    title: caseData.title,\n    subject: caseData.subject,\n    register: caseData.register,\n    scrapedAt: caseData.scrapedAt,\n    pdfUrl: caseData.pdfUrl,\n    boxFileId: caseData.boxFileId,\n    \n    // AI extracted data\n    partyDetails: extractedData.partyDetails || 'Not specified in document',\n    timelineOfEvents: extractedData.timeline || 'Not specified in document',\n    financialStatus: extractedData.financialStatus || 'Not specified in document',\n    insolvencyPractitioners: extractedData.insolvencyPractitioners || 'Not specified in document',\n    lawFirm: extractedData.lawFirm || 'Not specified in document',\n    \n    // Processing metadata\n    analyzedAt: now,\n    analysisModel: 'gpt-4o-vision',\n    pdfSize: caseData.pdfSize || 0\n  }\n}];"
+      },
+      "id": "parseai1",
+      "name": "Parse AI Analysis Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1LCCdNUXauOt4UXF5sGXr-9foDwzarHHMoC6HvrlXdGs",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "causeNumber"
+          ],
+          "schema": [
+            {
+              "id": "causeNumber",
+              "displayName": "causeNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "filingDate",
+              "displayName": "filingDate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "partyDetails",
+              "displayName": "partyDetails",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "timelineOfEvents",
+              "displayName": "timelineOfEvents",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "financialStatus",
+              "displayName": "financialStatus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "insolvencyPractitioners",
+              "displayName": "insolvencyPractitioners",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lawFirm",
+              "displayName": "lawFirm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scrapedAt",
+              "displayName": "scrapedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "analyzedAt",
+              "displayName": "analyzedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "log1",
+      "name": "Log Analysis to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [2660, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AN61B811XT6j8wL2",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all processed cases for reporting\nconst processedCases = $items(\"Parse AI Analysis Results\").map(i => i.json);\n\nif (processedCases.length === 0) {\n  return [{ json: { report: \"No new cases to report today.\" } }];\n}\n\n// Build report header\nconst header = `📋 Cayman Islands Registry Report - ${new Date().toLocaleDateString()}\\n\\n`;\n\n// Build case summaries\nconst caseSummaries = processedCases.map((caseData, index) => {\n  const caseNum = `**Case ${index + 1}: ${caseData.causeNumber}**\n`;\n  const details = `• **Title:** ${caseData.title}\n• **Filed:** ${caseData.filingDate}\n• **Subject:** ${caseData.subject}\n`;\n  const parties = `• **Parties:** ${caseData.partyDetails?.substring(0, 200)}${caseData.partyDetails?.length > 200 ? '...' : ''}`;\n  const financial = caseData.financialStatus !== 'Not specified in document' ? `\\n• **Financial Status:** ${caseData.financialStatus?.substring(0, 150)}${caseData.financialStatus?.length > 150 ? '...' : ''}` : '';\n  const lawFirm = caseData.lawFirm !== 'Not specified in document' ? `\\n• **Law Firm:** ${caseData.lawFirm}` : '';\n  \n  return `${caseNum}${details}${parties}${financial}${lawFirm}\\n\\n`;\n});\n\nconst summary = `**Summary:** ${processedCases.length} new case${processedCases.length !== 1 ? 's' : ''} processed and analyzed.\\n\\n`;\nconst footer = `---\\n*Automated report generated by Cayman Registry Monitor*`;\n\nreturn [{ json: { report: header + caseSummaries.join('') + summary + footer } }];"
+      },
+      "id": "format1",
+      "name": "Format Daily Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C09B46WHGBE",
+          "mode": "list",
+          "cachedResultName": "tma-intel"
+        },
+        "text": "={{ $json.report }}",
+        "otherOptions": {}
+      },
+      "id": "slack1",
+      "name": "Send Slack Report",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [3100, 300],
+      "webhookId": "a758eeb2-2f67-4710-9ed1-fd40aeb9cfe2",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "50evDPBNTBzBSYf0",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Schedule (8 AM)": {
+      "main": [
+        [
+          {
+            "node": "Scrape Financial Services Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Financial Services Registry": {
+      "main": [
+        [
+          {
+            "node": "Parse & Filter Petitions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Filter Petitions": {
+      "main": [
+        [
+          {
+            "node": "Read Existing Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Existing Cases": {
+      "main": [
+        [
+          {
+            "node": "Filter New Cases Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Cases Only": {
+      "main": [
+        [
+          {
+            "node": "Get Box File via WordPress AJAX",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Box File via WordPress AJAX": {
+      "main": [
+        [
+          {
+            "node": "Extract Box Download URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Box Download URL": {
+      "main": [
+        [
+          {
+            "node": "Download PDF from Box.com",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF from Box.com": {
+      "main": [
+        [
+          {
+            "node": "Convert PDF to Base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert PDF to Base64": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o Vision PDF Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o Vision PDF Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Analysis Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Analysis Results": {
+      "main": [
+        [
+          {
+            "node": "Log Analysis to Google Sheets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Analysis to Google Sheets": {
+      "main": [
+        []
+      ]
+    },
+    "Format Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Report": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Cayman"
+  },
+  "versionId": "workflow-version-id",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cayman-registry-monitor"
+  },
+  "id": "cayman-registry-complete",
+  "tags": [
+    "cayman",
+    "registry",
+    "pdf-analysis",
+    "automation"
+  ]
+}

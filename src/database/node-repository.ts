@@ -25,7 +25,7 @@ export class NodeRepository {
       throw new Error(`packageName is required for node ${node.nodeType}`);
     }
 
-    const stmt = this.db.prepare(`
+    const sql = `
       INSERT OR REPLACE INTO nodes (
         node_type, package_name, display_name, description,
         category, development_style, is_ai_tool, is_trigger,
@@ -33,9 +33,33 @@ export class NodeRepository {
         properties_schema, operations, credentials_required,
         outputs, output_names
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    `;
+
+    console.log(`🔍 REPO DEBUG: SQL statement: ${sql.substring(0, 100)}...`);
+    console.log(`🔍 REPO DEBUG: Parameters:`, [
+      node.nodeType,
+      node.packageName,
+      node.displayName,
+      node.description,
+      node.category,
+      node.style,
+      node.isAITool ? 1 : 0,
+      node.isTrigger ? 1 : 0,
+      node.isWebhook ? 1 : 0,
+      node.isVersioned ? 1 : 0,
+      node.version,
+      node.documentation || null,
+      JSON.stringify(node.properties, null, 2),
+      JSON.stringify(node.operations, null, 2),
+      JSON.stringify(node.credentials, null, 2),
+      node.outputs ? JSON.stringify(node.outputs, null, 2) : null,
+      node.outputNames ? JSON.stringify(node.outputNames, null, 2) : null
+    ]);
+
+    const stmt = this.db.prepare(sql);
 
     try {
+      console.log(`🔍 REPO DEBUG: About to execute statement...`);
       stmt.run(
         node.nodeType,
         node.packageName,
@@ -59,6 +83,7 @@ export class NodeRepository {
     } catch (error) {
       console.error(`❌ REPO ERROR: Failed to save node ${node.nodeType}:`, error);
       console.error(`   Node details: packageName="${node.packageName}", displayName="${node.displayName}"`);
+      console.error(`   SQL: ${sql}`);
       throw error;
     }
   }

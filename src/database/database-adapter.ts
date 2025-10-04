@@ -377,22 +377,28 @@ class SQLJSStatement implements PreparedStatement {
   
   run(...params: any[]): RunResult {
     try {
+      console.log(`🔍 SQLJS DEBUG: Running statement with ${params.length} params`);
+      console.log(`   Params:`, params);
+
       if (params.length > 0) {
         this.bindParams(params);
+        console.log(`   Bound params:`, this.boundParams);
         if (this.boundParams) {
           this.stmt.bind(this.boundParams);
         }
       }
-      
-      this.stmt.run();
+
+      const result = this.stmt.run();
+      console.log(`   SQL.js run result:`, result);
       this.onModify();
-      
+
       // sql.js doesn't provide changes/lastInsertRowid easily
       return {
         changes: 1, // Assume success means 1 change
         lastInsertRowid: 0
       };
     } catch (error) {
+      console.error(`❌ SQLJS ERROR:`, error);
       this.stmt.reset();
       throw error;
     }
@@ -429,12 +435,14 @@ class SQLJSStatement implements PreparedStatement {
           this.stmt.bind(this.boundParams);
         }
       }
-      
+
       const results: any[] = [];
-      while (this.stmt.step()) {
+      let hasRow = this.stmt.step();
+      while (hasRow) {
         results.push(this.convertIntegerColumns(this.stmt.getAsObject()));
+        hasRow = this.stmt.step();
       }
-      
+
       this.stmt.reset();
       return results;
     } catch (error) {
@@ -478,14 +486,27 @@ class SQLJSStatement implements PreparedStatement {
       this.boundParams = null;
       return;
     }
-    
+
     if (params.length === 1 && typeof params[0] === 'object' && !Array.isArray(params[0]) && params[0] !== null) {
       // Named parameters passed as object
       this.boundParams = params[0];
     } else {
       // Positional parameters - sql.js uses array for positional
       // Filter out undefined values that might cause issues
-      this.boundParams = params.map(p => p === undefined ? null : p);
+      console.log(`🔍 BIND DEBUG: Original params:`, params);
+      this.boundParams = params.map(p => {
+        if (p === undefined) {
+          console.log(`🔍 BIND DEBUG: Converting undefined to null`);
+          return null;
+        }
+        if (p === null) {
+          console.log(`🔍 BIND DEBUG: Keeping null as null`);
+          return null;
+        }
+        console.log(`🔍 BIND DEBUG: Keeping value:`, typeof p, p);
+        return p;
+      });
+      console.log(`🔍 BIND DEBUG: Final bound params:`, this.boundParams);
     }
   }
   
