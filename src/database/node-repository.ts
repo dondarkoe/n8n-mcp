@@ -18,6 +18,13 @@ export class NodeRepository {
    * Save node with proper JSON serialization
    */
   saveNode(node: ParsedNode): void {
+    console.log(`🔍 REPO DEBUG: Saving node ${node.nodeType} with packageName: "${node.packageName}"`);
+
+    if (!node.packageName) {
+      console.error(`❌ REPO ERROR: packageName is missing for node ${node.nodeType}`);
+      throw new Error(`packageName is required for node ${node.nodeType}`);
+    }
+
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO nodes (
         node_type, package_name, display_name, description,
@@ -27,26 +34,33 @@ export class NodeRepository {
         outputs, output_names
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    
-    stmt.run(
-      node.nodeType,
-      node.packageName,
-      node.displayName,
-      node.description,
-      node.category,
-      node.style,
-      node.isAITool ? 1 : 0,
-      node.isTrigger ? 1 : 0,
-      node.isWebhook ? 1 : 0,
-      node.isVersioned ? 1 : 0,
-      node.version,
-      node.documentation || null,
-      JSON.stringify(node.properties, null, 2),
-      JSON.stringify(node.operations, null, 2),
-      JSON.stringify(node.credentials, null, 2),
-      node.outputs ? JSON.stringify(node.outputs, null, 2) : null,
-      node.outputNames ? JSON.stringify(node.outputNames, null, 2) : null
-    );
+
+    try {
+      stmt.run(
+        node.nodeType,
+        node.packageName,
+        node.displayName,
+        node.description,
+        node.category,
+        node.style,
+        node.isAITool ? 1 : 0,
+        node.isTrigger ? 1 : 0,
+        node.isWebhook ? 1 : 0,
+        node.isVersioned ? 1 : 0,
+        node.version,
+        node.documentation || null,
+        JSON.stringify(node.properties, null, 2),
+        JSON.stringify(node.operations, null, 2),
+        JSON.stringify(node.credentials, null, 2),
+        node.outputs ? JSON.stringify(node.outputs, null, 2) : null,
+        node.outputNames ? JSON.stringify(node.outputNames, null, 2) : null
+      );
+      console.log(`✅ REPO DEBUG: Successfully saved node ${node.nodeType}`);
+    } catch (error) {
+      console.error(`❌ REPO ERROR: Failed to save node ${node.nodeType}:`, error);
+      console.error(`   Node details: packageName="${node.packageName}", displayName="${node.displayName}"`);
+      throw error;
+    }
   }
   
   /**

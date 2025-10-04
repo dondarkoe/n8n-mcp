@@ -34,7 +34,10 @@ export class N8nNodeLoader {
   private async loadPackageNodes(packageName: string, packagePath: string, packageJson: any): Promise<LoadedNode[]> {
     const n8nConfig = packageJson.n8n || {};
     const nodes: LoadedNode[] = [];
-    
+
+    console.log(`🔍 LOADER DEBUG: Loading nodes for package ${packageName} from ${packagePath}`);
+    console.log(`   n8n config:`, JSON.stringify(n8nConfig, null, 2));
+
     // Check if nodes is an array or object
     const nodesList = n8nConfig.nodes || [];
     

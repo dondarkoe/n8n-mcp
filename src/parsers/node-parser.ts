@@ -29,7 +29,7 @@ export class NodeParser {
     // Get base description (handles versioned nodes)
     const description = this.getNodeDescription(nodeClass);
     const outputInfo = this.extractOutputs(description);
-    
+
     return {
       style: this.detectStyle(nodeClass),
       nodeType: this.extractNodeType(description, packageName),
@@ -45,6 +45,7 @@ export class NodeParser {
       version: this.extractVersion(nodeClass),
       isVersioned: this.detectVersioned(nodeClass),
       packageName: packageName,
+      documentation: undefined, // Will be set by caller
       outputs: outputInfo.outputs,
       outputNames: outputInfo.outputNames
     };
